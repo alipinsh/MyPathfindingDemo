@@ -1,0 +1,447 @@
+<!doctype html>
+<html>
+<head>
+	<title>Pathfinding demo</title>
+    <style>
+        body > div {
+            padding: 8px;
+            margin-bottom: 8px;
+            border: 1px solid blue;
+        }
+
+        #grid div {
+            display: inline-block;
+            position: relative;
+            height: 32px;
+            width: 32px;
+            border: 1px solid black;
+            color: black;
+            cursor: pointer;
+        }
+
+        #grid div.selected {
+            border: 1px solid goldenrod;
+            color: goldenrod;
+        }
+
+        #grid div.movement-range {
+            background-color: cyan;
+        }
+
+        #grid div.attack-range {
+            background-color: orangered;
+        }
+
+        #grid img {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #units-list > div {
+            padding: 8px;
+            margin-bottom: 8px;
+            border: 1px solid darkblue;
+        }
+
+        br {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+	<div id="resize-grid">
+		<input id="width" type="number" min="1" placeholder="Width">
+		<input id="height" type="number" min="1" placeholder="Height">
+		<button id="resize-grid-button">Resize</button>
+	</div>
+	<div id="grid"></div>
+	<div id="tile-edit">
+		<input id="cost" type="number" min="1" max="255" placeholder="Cost">
+		<button id="tile-edit-button">Edit cost of selected tile</button><br>
+        <input id="min-cost" type="number" min="1" max="255" placeholder="Min cost">
+        <input id="max-cost" type="number" min="1" max="255" placeholder="Max cost">
+        <button id="randomize-costs">Randomize costs</button>
+	</div>
+	<div id="units">
+		<div id="units-list"></div>
+		<button id="units-add">Add</button>
+	</div>
+	<div id="run">
+		<button id="show-range">Show movement range of selected unit</button><br>
+		<button id="show-path">Show path of selected unit to selected position</button>
+        <input id="end-x" type="number" min="0" placeholder="End X">
+        <input id="end-y" type="number" min="0" placeholder="End Y"><br>
+        <button id="clear-ranges">Clear ranges</button>
+	</div>
+</body>
+<script>
+    const $ = document.querySelector.bind(document);
+    const $$ = document.querySelectorAll.bind(document);
+
+    class Unit {
+        constructor(team, movement, x, y) {
+            this.team = team;
+            this.movement = movement;
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    class Tile {
+        constructor(cost, x, y, standingUnit = null) {
+            this.cost = cost;
+            this.x = x;
+            this.y = y;
+            this.standingUnit = standingUnit;
+        }
+    }
+
+    let width = 0;
+    let height = 0;
+
+    let tiles = [];
+    let units = [];
+    let selectedTile = null;
+
+    let hashFunctionTable = [];
+
+    function getHashMapId(tile) {
+        return hashFunctionTable[tile.y][tile.x];
+    };
+
+    function shuffleArray(array) {
+        let currentIndex = array.length;
+        let randomIndex;
+
+        while (currentIndex > 0) {
+            randomIndex = Math.floor(Math.random() * currentIndex);
+            currentIndex--;
+
+            [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+        }
+
+        return array;
+    };
+
+    function getNeighbors(tile) {
+        let neighbors = [];
+
+        if (tile.x - 1 >= 0) {
+            neighbors.push(tiles[tile.y][tile.x - 1]);
+        }
+        if (tile.x + 1 < width) {
+            neighbors.push(tiles[tile.y][tile.x + 1]);
+        }
+        if (tile.y - 1 >= 0) {
+            neighbors.push(tiles[tile.y - 1][tile.x]);
+        }
+        if (tile.y + 1 < height) {
+            neighbors.push(tiles[tile.y + 1][tile.x]);
+        }
+
+        return shuffleArray(neighbors);
+    };
+
+    function findAndPopMinTile(q, dists) {
+        let minQTileIndex = 0;
+        let minDistIndex = getHashMapId(q[0]);
+        let i = 0;
+
+        for (qTile of q) {
+            if (dists[getHashMapId(qTile)].dist < dists[minDistIndex].dist) {
+                minQTileIndex = i;
+                minDistIndex = getHashMapId(qTile);
+            }
+            i++;
+        }
+
+        return q.splice(minQTileIndex, 1)[0];
+    };
+
+    function getMovementRange(unit) {
+        let dists = []; // this is a hashmap ok
+        let q = []; // this ideally has to be a minheap
+        let i = 0;
+
+        // only put max movement range tiles
+        for (y = Math.max(unit.y - unit.movement, 0); y < Math.min(unit.y + unit.movement + 1, height); y++) {
+            for (x = Math.max(unit.x - (unit.movement - Math.abs(unit.y - y)), 0); x < Math.min(unit.x + (unit.movement - Math.abs(unit.y - y)) + 1, width); ++x) {
+                dists.push({tile: tiles[y][x], dist: Infinity});
+                q.push(tiles[y][x]);
+                hashFunctionTable[y][x] = i;
+                i++;
+            }
+        }
+
+        dists[getHashMapId(tiles[unit.y][unit.x])].dist = 0;
+
+        while (q.length) {
+            let exploringTile = findAndPopMinTile(q, dists);
+
+            for (neighbor of getNeighbors(exploringTile)) {
+                if (q.find((tile) => tile.x == neighbor.x && tile.y == neighbor.y)) {
+                    let alt = dists[getHashMapId(exploringTile)].dist
+                        + (neighbor.standingUnit && neighbor.standingUnit.team != unit.team ? Infinity : neighbor.cost);
+                    if (alt < dists[getHashMapId(neighbor)].dist) {
+                        dists[getHashMapId(neighbor)].dist = alt;
+                    }
+                }
+            }
+        }
+
+        return dists;
+    };
+
+    function get1DIndex(tile) {
+        return width * tile.y + tile.x;
+    };
+
+    function heuristic(selectedTile, endTile) {
+        return Math.abs(selectedTile.x - endTile.x) + Math.abs(selectedTile.y - endTile.y);
+    };
+
+    function findAndPopMinTile2(q, fScore) {
+        let minQTileIndex = 0;
+        let minScoreIndex = get1DIndex(q[0]);
+        let i = 0;
+
+        for (qTile of q) {
+            if (fScore[get1DIndex(qTile)] < fScore[minScoreIndex]) {
+                minQTileIndex = i;
+                minDistIndex = get1DIndex(qTile);
+            }
+            i++;
+        }
+
+        return q.splice(minQTileIndex, 1)[0];
+    };
+
+    function reconstructPath(cameFrom, current) {
+        let totalPath = [];
+        while (cameFrom[get1DIndex(current)] != null) {
+            current = cameFrom[get1DIndex(current)];
+            totalPath = [current, ...totalPath];
+        }
+        return totalPath;
+    };
+
+    function getMovementPath(startTile, endTile) {
+        let q = []; // this ideally has to be a minheap
+        q.push(startTile);
+
+        let cameFrom = [];
+        let gScore = [];
+        let fScore = [];
+
+        for (y = 0; y < height; y++) {
+            for (x = 0; x < width; ++x) {
+                gScore.push(Infinity);
+                fScore.push(Infinity);
+                cameFrom.push(null);
+            }
+        }
+
+        gScore[get1DIndex(startTile)] = 0;
+        fScore[get1DIndex(startTile)] = heuristic(startTile, endTile);
+
+        while (q.length) {
+            let exploringTile = findAndPopMinTile2(q, fScore);
+
+            if (exploringTile == endTile) {
+                let path = reconstructPath(cameFrom, exploringTile);
+                path.push(endTile);
+                return path;
+            }
+
+            for (neighbor of getNeighbors(exploringTile)) {
+                let tentativeGScore = gScore[get1DIndex(exploringTile)]
+                    + (neighbor.standingUnit && neighbor.standingUnit.team != startTile.standingUnit.team ? Infinity : neighbor.cost);
+                if (tentativeGScore < gScore[get1DIndex(neighbor)]) {
+                    cameFrom[get1DIndex(neighbor)] = exploringTile;
+                    gScore[get1DIndex(neighbor)] = tentativeGScore;
+                    fScore[get1DIndex(neighbor)] = tentativeGScore + heuristic(neighbor, endTile);
+                    if (!q.find((qTile) => qTile.x == neighbor.x && qTile.y == neighbor.y)) {
+                        q.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        return null;
+    };
+
+    $('div#grid').onclick = (e) => {
+        if (selectedTile) {
+            $(`div[x="${selectedTile.x}"][y="${selectedTile.y}"]`).classList.remove('selected');
+        }
+
+        if (e.target == e.currentTarget) {
+            return;
+        }
+
+        if (e.target.tagName == 'IMG') {
+            selectedTile = tiles[e.target.parentElement.getAttribute('y')][e.target.parentElement.getAttribute('x')];
+            e.target.parentElement.classList.add('selected');
+        } else {
+            selectedTile = tiles[e.target.getAttribute('y')][e.target.getAttribute('x')];
+            e.target.classList.add('selected');
+        }
+    };
+
+    $('button#resize-grid-button').onclick = (e) => {
+        width = parseInt($('input#width').value);
+        height = parseInt($('input#height').value);
+
+        tiles = [];
+        $('div#grid').innerHTML = '';
+        hashFunctionTable = [];
+
+        for (let i = 0; i < height; i++) {
+            tiles.push([]);
+            hashFunctionTable.push([]);
+            for (let j = 0; j < width; j++) {
+                tiles[i].push(new Tile(1, j, i));
+                let tileElement = document.createElement('div');
+                tileElement.setAttribute('x', j);
+                tileElement.setAttribute('y', i);
+                tileElement.innerText = 1;
+                $('div#grid').append(tileElement);
+                hashFunctionTable[i].push(0);
+            }
+            $('div#grid').append(document.createElement('br'));
+        }
+    };
+
+    $('button#tile-edit-button').onclick = (e) => {
+        let cost = parseInt($('input#cost').value);
+
+        selectedTile.cost = cost;
+
+        $(`div[x="${selectedTile.x}"][y="${selectedTile.y}"]`).childNodes[0].textContent = cost;
+    };
+
+    $('button#randomize-costs').onclick = (e) => {
+        let minCost = parseInt($('input#min-cost').value);
+        let maxCost = parseInt($('input#max-cost').value);
+
+        for (let i = 0; i < height; i++) {
+            for (let j = 0; j < width; j++) {
+                tiles[i][j].cost = Math.floor(Math.random() * (maxCost + 1 - minCost) + minCost);
+                let tileElement = $(`div[x="${j}"][y="${i}"]`);
+                tileElement.textContent = tiles[i][j].cost;
+            }
+        }
+    };
+
+    $('button#units-add').onclick = (e) => {
+        if (selectedTile && !selectedTile.standingUnit) {
+            units.push(new Unit('blue', 5, selectedTile.x, selectedTile.y));
+        } else {
+            return;
+        }
+
+        let unit = units[units.length - 1];
+        tiles[unit.y][unit.x].standingUnit = unit;
+
+        let unitFormElement = document.createElement('div');
+        unitFormElement.setAttribute('unit-id', units.length - 1);
+        unitFormElement.innerHTML = `
+            <input name="team" type="text" placeholder="Team">
+            <input name="movement" type="text" placeholder="Movement">
+            <input name="x" type="text" placeholder="X">
+            <input name="y" type="text" placeholder="Y">
+            <button name="update">Update</button>
+            <button name="delete">Delete</button>
+        `;
+
+        unitFormElement.querySelector('input[name="team"]').value = unit.team;
+        unitFormElement.querySelector('input[name="movement"]').value = unit.movement;
+        unitFormElement.querySelector('input[name="x"]').value = unit.x;
+        unitFormElement.querySelector('input[name="y"]').value = unit.y;
+        unitFormElement.querySelector('button[name="update"]').onclick = (e) => {
+            let unitId = e.currentTarget.parentElement.getAttribute('unit-id');
+            let unit = units[unitId];
+
+            tiles[unit.y][unit.x].standingUnit = null;
+            unit.team = unitFormElement.querySelector('input[name="team"]').value;
+            unit.movement = parseInt(unitFormElement.querySelector('input[name="movement"]').value);
+            unit.x = parseInt(unitFormElement.querySelector('input[name="x"]').value);
+            unit.y = parseInt(unitFormElement.querySelector('input[name="y"]').value);
+            tiles[unit.y][unit.x].standingUnit = unit;
+
+            $(`img[unit-id="${unitId}"]`).remove();
+            let imgElement = document.createElement('img');
+            imgElement.setAttribute('unit-id', unitId);
+            imgElement.src = unit.team + '_unit.png';
+            $(`div[x="${unit.x}"][y="${unit.y}"]`).append(imgElement);
+        };
+        unitFormElement.querySelector('button[name="delete"]').onclick = (e) => {
+            let unitId = e.currentTarget.parentElement.getAttribute('unit-id');
+            units[unitId] = null;
+
+            e.currentTarget.parentElement.remove();
+            $(`img[unit-id="${unitId}"]`).remove();
+        };
+
+        $('div#units-list').append(unitFormElement);
+
+        let imgElement = document.createElement('img');
+        imgElement.setAttribute('unit-id', units.length - 1);
+        imgElement.src = unit.team + '_unit.png';
+        $(`div[x="${unit.x}"][y="${unit.y}"]`).append(imgElement);
+    };
+
+    $('button#show-range').onclick = (e) => {
+        if (!selectedTile) {
+            return;
+        }
+
+        let unit = units.find((u) => u && u.x == selectedTile.x && u.y == selectedTile.y);
+
+        if (!unit) {
+            return;
+        }
+
+        let dists = getMovementRange(unit);
+
+        dists.forEach((dist) => {
+            if (dist.dist <= unit.movement) {
+                $(`div[x="${dist.tile.x}"][y="${dist.tile.y}"]`).classList.add('movement-range');
+            }
+        });
+    };
+
+    $('button#show-path').onclick = (e) => {
+        if (!selectedTile) {
+            return;
+        }
+
+        let unit = units.find((u) => u && u.x == selectedTile.x && u.y == selectedTile.y);
+
+        if (!unit) {
+            return;
+        }
+
+        let endX = parseInt($('input#end-x').value);
+        let endY = parseInt($('input#end-y').value);
+
+        let startTile = tiles[unit.y][unit.x];
+        let endTile = tiles[endY][endX];
+
+        let path = getMovementPath(startTile, endTile);
+
+        if (path != null) {
+            path.forEach((tile) => {
+                $(`div[x="${tile.x}"][y="${tile.y}"]`).classList.add('movement-range');
+            });
+        }
+    };
+
+    $('button#clear-ranges').onclick = (e) => {
+        $$('div#grid > div').forEach((tileElement) => {
+            tileElement.classList.remove('movement-range');
+        });
+    };
+</script>
+</html>
